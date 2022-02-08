@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// Only devices whose name contains this string will be tried.
 const PERIPHERAL_NAME_MATCH_FILTER: &str = "M5Atom-MCP3424 BLE Sender";
 /// UUID of the characteristic for which we should subscribe to notifications.
-const NOTIFY_CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0xB9EA5233_37EF_4DD6_87A8_2A875E821C46);
+const NOTIFY_CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0x0xB9EA5233_37EF_4DD6_87A8_2A875E821C46);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
