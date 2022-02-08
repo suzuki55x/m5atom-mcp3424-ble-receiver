@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         peripheral.subscribe(&notify_chara).await?;
                         let mut notification_stream = peripheral.notifications().await?;
                         while let Some(data) = notification_stream.next().await {
-                            println!("Received: {:?}", data.value);
+                            println!("Received: {:?}", String::from_utf8(data.value).unwrap());
                         }
                         // Disconnect
                         println!("Disconnecting from peripheral {:?}", local_name);
