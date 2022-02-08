@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
+use chrono::Local;
 use futures::stream::StreamExt;
 use tokio::time;
 use uuid::Uuid;
@@ -82,7 +83,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         peripheral.subscribe(&notify_chara).await?;
                         let mut notification_stream = peripheral.notifications().await?;
                         while let Some(data) = notification_stream.next().await {
-                            println!("Received: {:?}", String::from_utf8(data.value).unwrap());
+                            println!(
+                                "Received:, {}, {}",
+                                Local::now(),
+                                String::from_utf8(data.value).unwrap()
+                            );
                         }
                         // Disconnect
                         println!("Disconnecting from peripheral {:?}", local_name);
