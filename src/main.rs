@@ -1,9 +1,14 @@
 use std::error::Error;
+use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::Path;
 use std::time::Duration;
 
 use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
 use chrono::Local;
+use clap::Parser;
 use futures::stream::StreamExt;
 use tokio::time;
 use uuid::Uuid;
@@ -14,10 +19,42 @@ const PERIPHERAL_NAME_MATCH_FILTER: &str = "M5Atom-MCP3424 BLE Sender";
 /// UUID of the characteristic for which we should subscribe to notifications.
 const NOTIFY_CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0xae84d642_7f4b_11ec_a8a3_0242ac120002);
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    println!("Hello, world!");
-    // BLE mode
+#[derive(Parser)]
+#[clap(version = "1.1.0", author = "suzuki_ta")]
+struct Opts {
+    /// BLE mode
+    #[clap(short = 'B')]
+    mode_ble: bool, // -B
+
+    /// UART BAUDRATE
+    #[clap(short = 'b', default_value = "115200")]
+    uart_baud: u32, // -b
+
+    /// UART interface ex) COM0 ex) /dev/tty.usbserialxxx
+    #[clap(short = 'i')]
+    uart_interface: Option<String>, // -i
+
+    /// Output file dir.
+    #[clap(short, long)]
+    output: Option<String>, // -o
+
+    /// Print verbose in console
+    #[clap(short)]
+    verbose: bool, // -v
+}
+
+fn write_data(str: String, opts: &Opts, writer: &mut Option<BufWriter<File>>) {
+    if opts.verbose {
+        println!("{}, {}", Local::now(), str);
+    }
+    if let Some(w) = writer {
+        w.write_all(format!("{}, {}\n", Local::now(), str).as_bytes())
+            .unwrap();
+        w.flush().unwrap();
+    }
+}
+
+async fn ble_mode(opts: &Opts, writer: &mut Option<BufWriter<File>>) -> Result<(), Box<dyn Error>> {
     let manager = Manager::new().await?;
     // get 'Central' BLE adapter list
     let adapter_list = manager.adapters().await?;
@@ -35,6 +72,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await
             .expect("Can't scan BLE adapter for connected devices..");
         time::sleep(Duration::from_secs(2)).await;
+
         // get peripherals list
         let peripherals = adapter.peripherals().await?;
         if peripherals.is_empty() {
@@ -83,11 +121,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         peripheral.subscribe(&notify_chara).await?;
                         let mut notification_stream = peripheral.notifications().await?;
                         while let Some(data) = notification_stream.next().await {
-                            println!(
-                                "Received:, {}, {}",
-                                Local::now(),
-                                String::from_utf8(data.value).unwrap()
-                            );
+                            let str = String::from_utf8(data.value).unwrap();
+                            write_data(str, opts, writer);
                         }
                         // Disconnect
                         println!("Disconnecting from peripheral {:?}", local_name);
@@ -100,6 +135,69 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+fn uart_mode(opts: &Opts, writer: &mut Option<BufWriter<File>>) {
+    let baud: u32 = opts.uart_baud;
+
+    // UART interface指定されていれば正常処理。なければポート表示
+    if let Some(ref com) = opts.uart_interface {
+        // シリアルポートOPEN
+        let mut port = serialport::new(com, baud)
+            .timeout(Duration::from_millis(30))
+            .open()
+            .expect("Failed to open port");
+
+        // UART mode main loop
+        loop {
+            let mut reader = BufReader::new(&mut port);
+            let mut my_str = String::new();
+            reader.read_line(&mut my_str).unwrap();
+
+            write_data(my_str, opts, writer);
+        }
+    } else {
+        // 検出シリアルポート一覧表示
+        println!("=======================");
+        println!("<-i> option is required.");
+        let ports = serialport::available_ports().expect("No ports found!");
+        println!("Available ports: ");
+        for p in ports {
+            println!("  {}", p.port_name);
+        }
+        println!("=======================");
+
+        // exit
+        std::process::exit(0);
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // オプションパース
+    let opts: Opts = Opts::parse();
+    let mut writer: Option<BufWriter<File>> = None;
+
+    if let Some(output_dir) = &opts.output {
+        fs::create_dir_all(&output_dir)?;
+
+        let output_path = Path::new(&output_dir);
+        let output_file = output_path.join(format!(
+            "current_{}.txt",
+            Local::now().format("%Y%m%d_%H%M%S_%Z")
+        ));
+        writer = Some(BufWriter::new(File::create(output_file).unwrap()));
+    }
+
+    if opts.mode_ble {
+        // BLE mode
+        ble_mode(&opts, &mut writer).await?;
+    } else {
+        // UART mode
+        uart_mode(&opts, &mut writer);
     }
     Ok(())
 }
