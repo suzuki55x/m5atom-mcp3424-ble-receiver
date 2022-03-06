@@ -20,8 +20,12 @@ const PERIPHERAL_NAME_MATCH_FILTER: &str = "M5Atom-MCP3424 BLE Sender";
 const NOTIFY_CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0xae84d642_7f4b_11ec_a8a3_0242ac120002);
 
 #[derive(Parser)]
-#[clap(version = "1.1.0", author = "suzuki_ta")]
+#[clap(version = "1.2.0", author = "suzuki_ta")]
 struct Opts {
+    /// [DEBUG] Only calculate ADC code to Shunt current
+    #[clap(short = 'c')]
+    calc: Option<f64>, // -c
+
     /// BLE mode
     #[clap(short = 'B')]
     mode_ble: bool, // -B
@@ -41,6 +45,38 @@ struct Opts {
     /// Print verbose in console
     #[clap(short)]
     verbose: bool, // -v
+
+    /// ADC bit
+    #[clap(short, long, default_value = "12")]
+    adc_bit: f64, // -a
+
+    /// Shunt registance[mΩ]
+    #[clap(short, long, default_value = "2")]
+    shunt_registance: f64, // -s
+
+    /// Reference Voltage[V]
+    #[clap(long, default_value = "0.2")]
+    refference_voltage: f64,
+
+    /// Amp gain
+    #[clap(long, default_value = "100")]
+    gain_amp: f64,
+
+    /// Upper voltage divider resistance[Ω]
+    #[clap(long, default_value = "3300")]
+    upper_resistance: f64,
+
+    /// Lower voltage divider resistance[Ω]
+    #[clap(long, default_value = "5600")]
+    lower_resistance: f64,
+
+    /// ADC full scale voltage[V]
+    #[clap(long, default_value = "2.048")]
+    adc_max_voltage: f64,
+
+    /// Enable 2~4ch
+    #[clap(short = 'f', long)]
+    is_enable_4ch: bool, // -f
 }
 
 fn write_data(str: String, opts: &Opts, writer: &mut Option<BufWriter<File>>) {
@@ -52,6 +88,68 @@ fn write_data(str: String, opts: &Opts, writer: &mut Option<BufWriter<File>>) {
             .unwrap();
         w.flush().unwrap();
     }
+}
+
+fn calc_shunt_current(adc_code: f64, opts: &Opts) -> f64 {
+    let v_adc_max: f64 = opts.adc_max_voltage;
+    let r_upper: f64 = opts.upper_resistance;
+    let r_lower: f64 = opts.lower_resistance;
+    let v_ref: f64 = opts.refference_voltage;
+    let g_amp: f64 = opts.gain_amp;
+    let bit: f64 = opts.adc_bit;
+    let shunt: f64 = opts.shunt_registance * 1000.0; // [mΩ] to [Ω]
+
+    let bit_scale: f64 = 2f64.powf(bit - 1.0) - 1.0; // 分解能
+    let v_adc = v_adc_max * adc_code / bit_scale;
+    let v_o_amp = v_adc * ((r_lower + r_upper) / r_lower);
+    let v_i_amp = (v_o_amp - v_ref) / g_amp;
+    let i_sr = v_i_amp / shunt;
+
+    println!("adc => {}", adc_code);
+    println!("ch1 => {}", i_sr);
+
+    i_sr
+}
+
+fn parse_data(str: String, opts: &Opts) -> String {
+    let mut str_result: String = String::new();
+
+    let str_arr: Vec<&str> = str.split(',').collect();
+
+    //println!("{:?}", str_arr);
+
+    let len = str_arr.len();
+    if len > 1 {
+        let adc_code: f64 = str_arr[1].trim().parse().unwrap(); // 受信値
+        let i_sr: f64 = calc_shunt_current(adc_code, opts);
+
+        str_result = format!("{}, {}", adc_code, i_sr);
+    } else {
+        eprintln!("index error");
+    }
+
+    if opts.is_enable_4ch {
+        if len > 4 {
+            let adc_code: f64 = str_arr[2].trim().parse().unwrap(); // 受信値
+            let i_sr: f64 = calc_shunt_current(adc_code, opts);
+
+            str_result.push_str(&format!(", {}", i_sr));
+
+            let adc_code: f64 = str_arr[3].trim().parse().unwrap(); // 受信値
+            let i_sr: f64 = calc_shunt_current(adc_code, opts);
+
+            str_result.push_str(&format!(", {}", i_sr));
+
+            let adc_code: f64 = str_arr[4].trim().parse().unwrap(); // 受信値
+            let i_sr: f64 = calc_shunt_current(adc_code, opts);
+
+            str_result.push_str(&format!(", {}", i_sr));
+        } else {
+            println!("ch2~4 val error");
+        }
+    }
+
+    str_result
 }
 
 async fn ble_mode(opts: &Opts, writer: &mut Option<BufWriter<File>>) -> Result<(), Box<dyn Error>> {
@@ -122,7 +220,7 @@ async fn ble_mode(opts: &Opts, writer: &mut Option<BufWriter<File>>) -> Result<(
                         let mut notification_stream = peripheral.notifications().await?;
                         while let Some(data) = notification_stream.next().await {
                             let str = String::from_utf8(data.value).unwrap();
-                            write_data(str, opts, writer);
+                            write_data(parse_data(str, opts), opts, writer);
                         }
                         // Disconnect
                         println!("Disconnecting from peripheral {:?}", local_name);
@@ -157,7 +255,7 @@ fn uart_mode(opts: &Opts, writer: &mut Option<BufWriter<File>>) {
             let mut my_str = String::new();
             reader.read_line(&mut my_str).unwrap();
 
-            write_data(my_str, opts, writer);
+            write_data(parse_data(my_str, opts), opts, writer);
         }
     } else {
         // 検出シリアルポート一覧表示
@@ -180,6 +278,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // オプションパース
     let opts: Opts = Opts::parse();
     let mut writer: Option<BufWriter<File>> = None;
+
+    if let Some(c) = &opts.calc {
+        let val = parse_data(format!("debug, {}", c), &opts);
+        println!("shunt current: {}", val);
+
+        // exit
+        std::process::exit(0);
+    }
 
     if let Some(output_dir) = &opts.output {
         fs::create_dir_all(&output_dir)?;
