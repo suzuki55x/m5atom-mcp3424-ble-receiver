@@ -97,7 +97,7 @@ fn calc_shunt_current(adc_code: f64, opts: &Opts) -> f64 {
     let v_ref: f64 = opts.refference_voltage;
     let g_amp: f64 = opts.gain_amp;
     let bit: f64 = opts.adc_bit;
-    let shunt: f64 = opts.shunt_registance * 1000.0; // [mΩ] to [Ω]
+    let shunt: f64 = opts.shunt_registance / 1000.0; // [mΩ] to [Ω]
 
     let bit_scale: f64 = 2f64.powf(bit - 1.0) - 1.0; // 分解能
     let v_adc = v_adc_max * adc_code / bit_scale;
