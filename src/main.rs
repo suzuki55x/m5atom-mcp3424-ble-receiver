@@ -293,7 +293,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let output_path = Path::new(&output_dir);
         let output_file = output_path.join(format!(
             "current_{}.txt",
-            Local::now().format("%Y%m%d_%H%M%S_%Z")
+            Local::now().format("%Y%m%d_%H%M%S")
         ));
         writer = Some(BufWriter::new(File::create(output_file).unwrap()));
     }
